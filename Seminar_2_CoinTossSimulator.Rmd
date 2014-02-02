@@ -1,0 +1,40 @@
+Seminar 2: Coin Toss Simulator
+========================================================
+
+We will simulate flipping a coin n times, where the coin comes up heads with a probability p (say, 0.3) and plot the proportion of heads. 
+
+```{r coinFlips}
+p  <- 0.3 
+n <- seq(from=1, to=750, by=1)
+coinFlips <- sapply(n, rbinom, size=1, prob=p)
+count_heads <- sapply(coinFlips, sum) 
+compute_proportions <- count_heads/n 
+```
+
+```{r fig.width=7, fig.height=6}
+plot(n,compute_proportions, type="l", xlab= "n (sample size)", ylab="Proportion of heads", main="Coin Toss Simulator") # plot the proportion of heads against n
+abline(h=p, col="purple", lwd=2) 
+```
+
+As n increases, proportion of heads tends to p (note that the *true* probability is represented by the purple line).
+
+We can simulate the coin flipping over many trials of varying sample sizes and compute the mean proportion of heads.
+
+```{r Coin Flip Simulation for varying n}
+trials <- 500
+varying_n <- 10^(1:4)
+names(varying_n) <- paste0("n =", varying_n)
+coin_tosses <- function(varying_n, trials, prob) {
+  mat <- matrix(rbinom(n = trials * varying_n, size = 1, prob = p), nrow = trials, 
+              ncol = varying_n)
+  prop_heads <- rowMeans(mat)
+  return(prop_heads)
+}
+all_prop <- sapply(varying_n, coin_tosses, trials = trials, p = p)
+```
+
+```{r fig.width=7, fig.height=6}
+boxplot(all_prop, xlab = "n (Sample Size)", ylab="Proportion of Heads", main="Boxplot of Mean Proportion of Heads over Varying Sample Sizes")
+```
+
+As before, we observe that as n increases, the mean proportion of heads tends to p, (consistent with the Weak Law of Large Numbers). 

@@ -1,0 +1,54 @@
+Seminar 3: Playing with Lattice and ggplot2 Graphics using the photorec dataset
+===============================================================================
+
+
+```{r Loading libraries}
+library(lattice)
+library(RColorBrewer)
+library(gplots)
+library(ggplot2)
+```
+```{r Loading dataset}
+photoDat <- read.table("GSE4051_data.tsv")
+str(photoDat, max.level = 0)
+sampleinfo <- readRDS("GSE4051_design.rds")
+str(sampleinfo)
+```
+Let's make a heatmap of the 35 random probsets from our photorec dataset using heatmap.2 function of gplots. Note that we will need to reconfigure our dataframe as a matrix.
+```{r Making a Heatmap}
+set.seed(1)
+(op <- sample(1:nrow(photoDat), size = 35))
+sumDat <- photoDat[op, ]
+str(sumDat)
+sumDat <- as.matrix(t(sumDat))
+rownames(sumDat) <- with(sampleinfo,paste(devStage, gType, sidChar, sep="_"))
+str(sumDat)
+feelingBlue <- colorRampPalette(brewer.pal(n = 7, "Blues"))
+```
+
+```{r fig.width=7, fig.height=6}
+heatmap.2(sumDat, col = feelingBlue, trace = "none")
+```
+
+Now let's plot Sample 16 against Sample 2 using the stat_binhex function in ggplot2
+```{r fig.width=7, fig.height=6}
+(overplotting <- ggplot(photoDat, aes(photoDat$Sample_16, photoDat$Sample_2)) + stat_binhex() + theme_bw() + xlab("Expression of Sample 16") + ylab("Expression of Sample 2") + ggtitle("Gene Expression Levels in Two Samples"))
+```
+Working with a smaller subset of the dataset, we can look at the expression levels of Jenny's favourite eggBomb vs poisonFang probes by Genotype
+
+```{r Loading smaller dataset}
+mini_dat <-  readRDS("GSE4051_MINI.rds")
+str(mini_dat)
+```
+```{r fig.width=7, fig.height=6}
+splot <- ggplot(mini_dat, aes(x=eggBomb, y=poisonFang, color=devStage))
+(splot <- splot + geom_point() + theme_bw() + xlab("Expression of eggBomb") + ylab("Expression of poisonFang") + ggtitle("Scatterplot of Expression Levels by Genotype") + facet_wrap(~ gType))
+```
+Let's re-shape the data a bit to look at density plots of gene expression by developmental stage
+```{r Reshaping smaller dataset}
+reshaped_dat <-with(mini_dat, data.frame(sidChar, sidNum, devStage, gType,probeset = factor(rep(c("crabHammer", "eggBomb", "poisonFang"), each = nrow(mini_dat))), geneExp = c(crabHammer, eggBomb, poisonFang)))
+str(reshaped_dat)
+```
+```{r fig.width=7, fig.height=6}
+(densplot <- ggplot(reshaped_dat, aes(geneExp, color = devStage)) + stat_density(geom = "line", position = "identity") + geom_point(aes(y = 0.05), position = position_jitter(height = 0.005)))
+```
