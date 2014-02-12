@@ -1,0 +1,50 @@
+Seminar 4: Run Time Calculation
+===================================================
+
+We would like to calculate the run time needed to perform two-sample testing (for differential expression analysis) using various datasets containing varying numbers of probes (n).
+
+We will begin by loading necessary packages and the photorec dataset
+
+```{r loading necessary packages and dataset}
+library(plyr)
+library(lattice)
+prDat <- read.table("GSE4051_data.tsv")
+str(prDat, max.level=0)
+prDes <- readRDS("GSE4051_design.rds")
+str(prDes)
+```
+
+Let's draw increasing numbers (n) of probes from the dataset
+
+```{r Picking increasing n numbers of probes}
+n <-  seq(from = 50, to = 1000, by = 100)
+set.seed(72)
+```
+Now we will write a function that prepares a dataframe of n probes and then calculates run time for differential gene expression analysis
+```{r Function for calculating run time on various n-sized datasets}
+Calc.Run.Time <- function(x){
+  random.probes <- sample(1:nrow(prDat),x)
+  mini.df <- prDat[random.probes,]
+  mini.df <- data.frame(gExp = as.vector(t(as.matrix(mini.df))), gene = factor(rep(rownames(mini.df), each = ncol(mini.df)), levels = rownames(mini.df)))
+  mini.df <- suppressWarnings(data.frame(prDes, mini.df))
+  run.time <- system.time(ppval <- suppressWarnings(ddply(mini.df, ~ gene, function(w) {
+    tt <- t.test(gExp ~ gType, w)
+    wt <- wilcox.test(gExp ~ gType, w)
+    ks <- with(w, ks.test(gExp[gType=="NrlKO"], gExp[gType=="wt"]))
+    round(c(t.test = tt$p.value, Wilcoxon = wt$p.value, KS = ks$p.value), 4)
+  })))
+  return(data.frame(probes=x, elapsed=run.time["elapsed"]))
+}
+```
+Now let's compute run times for each value of n
+```{r Running the function over all values of n and assembling a nice neat dataframe of outputs}
+nRunTimes <- lapply(n,Calc.Run.Time)
+run.time.df <- do.call(rbind,nRunTimes)
+head(run.time.df)
+```
+Plot the elapsed time against number of probes in dataset
+
+```{r fig.width=7, fig.height=6}
+xyplot(elapsed~probes,run.time.df, xlab="Number of probes", ylab="Run time")
+```
+As we would expect, the run time increases linearly with increasing number of probes in the dataset
