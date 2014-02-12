@@ -1,0 +1,47 @@
+Seminar 4: Two-Sample Testing
+========================================================
+We will begin by loading necessary packages and the photorec dataset
+
+```{r Loading packages and datasets}
+library(plyr)
+library(lattice)
+prDat <- read.table("GSE4051_data.tsv")
+str(prDat, max.level=0)
+prDes <- readRDS("GSE4051_design.rds")
+str(prDes)
+```
+
+Let's extract the gene expression data for 100 random probes and place the data into a separate dataframe
+
+```{r Extracting 100 random probes and placing data into new dataframe}
+set.seed(16)
+random.probes <- sample(1:nrow(prDat),100)
+mini.df <- prDat[random.probes,]
+mini.df <- data.frame(gExp = as.vector(t(as.matrix(mini.df))), gene = factor(rep(rownames(mini.df), each = ncol(mini.df)), levels = rownames(mini.df)))
+mini.df <- suppressWarnings(data.frame(prDes, mini.df))
+str(mini.df)
+```
+Create a function that computes a t-test, Wilcoxon and KS test and returns their respective p-values as a matrix
+
+```{r Two-sample testing by 3 methods function}
+ppval <- suppressWarnings(ddply(mini.df, ~ gene, function(x) {
+  tt <- t.test(gExp ~ gType, x)
+  wt <- wilcox.test(gExp ~ gType, x)
+  ks <- with(x, ks.test(gExp[gType=="NrlKO"], gExp[gType=="wt"]))
+  round(c(t.test = tt$p.value, Wilcoxon = wt$p.value, KS = ks$p.value), 4)
+}))
+head(ppval)
+```
+Plot scatterplots of  p-values (untransformed and log-transformed) from the 3 different statistical tests
+
+```{r fig.width=7, fig.height=6}
+plot(ppval[,-1], col="blue")
+plot(log(ppval[,-1]), col="red")
+```
+Set threshold of significance at alpha = 0.05 and count how many probes are "statistically significant hits" by all 3 methods, 2 methods, 1 method or none
+```{r Counting number of probes that are "hits"}
+alpha  <- ppval[,-1] <= 0.05
+apply(alpha,2,sum)
+(count.hits <- as.matrix(count(apply(alpha,1,sum))))
+```
+
