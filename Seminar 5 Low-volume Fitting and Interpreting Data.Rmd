@@ -1,0 +1,102 @@
+Seminar 5 Low-volume Fitting and Interpreting Linear Models
+============================================================
+We will using data aggregation methods to fit linear models on a small dataset comprising a few (say, 9) probes.
+
+```{r Loading required packages and dataset}
+library(lattice)
+library(plyr)
+prDat <- read.table("GSE4051_data.tsv")
+str(prDat, max.level = 0)
+prDes <- readRDS("GSE4051_design.rds")
+str(prDes)
+```
+
+Select 9 random probes from the dataset. 
+
+```{r Random probe selection}
+set.seed(1231411)
+n <- 9
+(luckyGenes <- rownames(prDat)[sample(1:nrow(prDat),size = n)])
+```
+
+We will need to first write a number of functions to generate the dataframe, make the stripplots and perform the two-sample tests
+
+```{r Function to prepare the dataset of 9 probes}
+prepareData <- function(a){
+  dat <- prDat[a,]
+  dat <- data.frame(gExp = as.vector(t(as.matrix(dat))), gene = factor(rep(rownames(dat), each = ncol(dat)), levels = rownames(dat)))
+  dat <- suppressWarnings(data.frame(prDes, dat))
+  return(dat)
+}
+```
+
+```{r Function to make stripplots}
+makeStripplot <- function(x,...){
+  stripplot(gExp ~ devStage | gene, x,group = gType, jitter.data = TRUE,auto.key = TRUE, type = c('p', 'a'), par.settings=simpleTheme(col=c("dodgerblue","deeppink1"), pch=16),grid = TRUE,...)
+}
+```
+
+```{r Function to perform a t-test comparing P2 to P10 devStages for each probe}
+Run.TTest <- function(t){
+  datt <- subset(t, devStage%in%c("P2", "P10"))
+  tt <- t.test(gExp ~ devStage, datt)
+  return(c(tt$estimate,tt$statistic, tt$parameter, p.value=tt$p.value))
+}
+```
+```{r Function to fit a linear model for expression of each probes by developmental stage, using only wt samples only}
+Fit.LM <- function(x){
+  fitA <- lm(gExp ~ devStage, data = x, subset = gType == "wt")
+  return(fitA)
+}
+```
+
+```{r Function to perform inference for a contrast}
+inference.testing <- function(o){
+  obsDiff <- contrast.matrix %*% coef(o)
+  estSE <- contrast.matrix %*% vcov(o) %*% t(contrast.matrix)
+  testStat <- obsDiff/estSE
+  p.values <- 2 * pt(abs(testStat), df = df.residual(o), lower.tail = FALSE)
+  c(Estimate=obsDiff, Std_Error=estSE, Statistic=testStat, p.values=p.values)
+}
+```
+
+```{r Function to fit a linear model with two categorical covariates (gType and devStage) and test if their interaction is significant using anova}
+Interaction.2covariates <- function(y){
+  oFitBig <- lm(formula = gExp ~ gType*devStage, data = y)
+  oFitSmall <- lm(formula = gExp ~ gType + devStage, data = y)
+  anova.interaction<- anova(oFitSmall, oFitBig)
+  c(p.values=anova.interaction[2,6])
+}
+```
+
+Let's begin the analysis by preparing the dataset of the 9 selected probes and making stripplots for each probe.
+```{r fig.width=7, fig.height=6}
+makeStripplot(sumDat <- prepareData(luckyGenes))
+head(sumDat)
+```
+
+Now we will run t-tests across all probes in the dataset comparing P2 vs. P10 expression levels
+```{r Run t-tests across all probes in dataset comparing P2 vs. P10 expression levels}
+ddply(sumDat, ~gene, Run.TTest)
+```
+Based on the t-test p-values, only the probes "1423612_at" and "1445125_at" had expression levels that were significantly different at P2 vs P10 devStages. 
+
+We will also fit linear models for expression of each probe by devStage, using only wt samples
+```{r Run linear models for expression of each probe by devStage, using only wt samples only}
+lm.list <- dlply(sumDat, ~gene, Fit.LM)
+(lm.coef.df <- ldply(lm.list,coef))
+```
+
+We will need to make a contrast matrix in order to infer differences between devStage P2 and 4_weeks effect
+```{r Make contrast matrix to infer difference between devStage P2 and 4_weeks effect}
+contrast.matrix <- matrix(c(0,1,0,0,-1), nrow=1)
+(infer.df <- ldply(lm.list,inference.testing))
+```
+Given that the two-sided p-values are rather large (ie >0.05), we can conclude that there is no true difference in mean expression at P2 and 4 weeks in wildtype mice for these 9 probes.
+
+We will now fit a linear model with two categorical covariates (gType and devStage) and test if their interaction is significant using anova
+```{r Fit a linear model with two categorical covariates (gType and devStage) and test if their interaction is significant using anova}
+ddply(sumDat, ~gene, Interaction.2covariates)
+```
+
+Based on the high p-values from the anova, we can conclude that there is no interaction of gType and devStage for most of these probes except for 1423612_at (p-value = 0.033). 
