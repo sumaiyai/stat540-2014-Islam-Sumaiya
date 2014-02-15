@@ -1,0 +1,202 @@
+Seminar 6: Fitting and interpreting linear models (high volume)
+================================================================
+We will begin by loading the required packages and data
+```{r Installing and loading required package}
+source("http://www.bioconductor.org/biocLite.R")
+biocLite("limma")
+biocLite("statmod")
+library(limma)
+library(lattice)
+library(plyr)
+```
+```{r Loading photorec dataset} 
+prDat <- read.table("GSE4051_data.tsv")
+str(prDat, max.level = 0)
+prDes <- readRDS("GSE4051_design.rds")
+str(prDes)
+```
+We will also write a few functions that we will use later on.
+```{r Function to prepare the dataset (using only wt samples)}
+prepareData <- function(a){
+  dat <- prDat[a,]
+  dat <- data.frame(gExp = as.vector(t(as.matrix(dat))), gene = factor(rep(rownames(dat), each = ncol(dat)), levels = rownames(dat)))
+  dat <- suppressWarnings(data.frame(prDes, dat))
+  dat <- subset(dat, subset = gType == "wt")
+  return(dat)
+}
+```
+```{r function to make a stripplot of the selected dataset}
+makeStripplot <- function(x,...){
+  stripplot(gExp ~ devStage | gene, x,group = gType, jitter.data = TRUE,auto.key = FALSE, type = c('p', 'a'), par.settings=simpleTheme(col=c("dodgerblue","deeppink1"), pch=16),grid = TRUE,...)
+}
+```
+```{r Function to fit a linear model for expression of each probes by developmental stage, using only wt samples only.}
+Fit.LM <- function(x){
+  fitA <- lm(gExp ~ devStage, data = x)
+  return(fitA)
+}
+```
+```{r Function that will return F-statistic and p-value of a fitted linear model}
+lmfp <- function (modelobject) {
+  if (class(modelobject) != "lm") stop("Not an object of class 'lm' ")
+  f <- summary(modelobject)$fstatistic
+  p <- pf(f[1],f[2],f[3],lower.tail=F)
+  attributes(p) <- NULL
+  return(c("F"=f[1], "P.value"=p))
+}
+```
+Let's do a simulation to illustrate the poor variance estimates for small sample (n) sizes. We will simulate data for 1000 genes; for each gene, we will have 3 observations from a standard normal distribution N(0,1).
+```{r}
+set.seed(3)
+m <- 1000
+n <- 3
+x <- matrix(rnorm(m * n), nrow = m)
+# Inspecting the observed gene-wise variances
+obsVars <- apply(x, 1, var)
+summary(obsVars)
+mean(obsVars < 1/3)
+densityplot(~obsVars, n = 200)
+```
+We can observe that many of the observed variances are very small, even though they are equal to 1 "on average" (for a standard normal distribution). For example, we see that at least a quarter of the genes appear to exhibit a sample variance that is less than one-third the true variance. This can wreak havoc with statistical inference, such as t-statistics. 
+Accordingly, limma is designed to combat this problem.
+
+```{r Fit a linear model: explain gene expression in the wildtype mice as a function of developmental stage (one-way ANOVA)}
+wtDes <- subset(prDes, gType == "wt")
+str(wtDes)
+wtDat <- subset(prDat, select = prDes$gType == "wt")
+str(wtDat, max.level = 0)
+# Make a model matrix using the default "ref + treatment effects" scheme for handling the devStage factor
+wtDesMat <- model.matrix(~devStage, wtDes)
+str(wtDesMat)
+# Now we will fit the model, for all probes at once, and use eBayes() to moderate the estimated error variances
+wtFit <- lmFit(wtDat, wtDesMat)
+wtEbFit <- eBayes(wtFit)
+topTable(wtEbFit)
+# You'll see that, by default, topTable() reports the top 10 hits. But let's take more care and specify explicitly the coefficients we want to test for equality with zero. Recall that one can specify these by number but I recommend doing this by name.
+topTable(wtEbFit, coef = 2:5) # warning: this code is cryptic and error-prone!
+colnames(coef(wtEbFit))
+(dsHits <- topTable(wtEbFit, coef = grep("devStage", colnames(coef(wtEbFit)))))
+```
+Using the hit list from the above topTable, we will extract and make stripplots for hits 3, 6 and 9 on the list.
+```{r}
+interesting_hits <- rownames(dsHits[c(3,6,9),])
+makeStripplot(some.hits <- prepareData(interesting_hits))
+```
+
+We will fit a linear model to each of these 3 probes to check if the F stats and p-values are similar to the topTable values produced by limma.
+```{r}
+fit3 <- dlply(some.hits, ~gene, Fit.LM)
+(fp.summary<- ldply(fit3,lmfp))
+(dsHits[c(3,6,9),c(6,7)])
+```
+We can observe that the F-statistic and p-values generated from lm and limma are close but not exactly equal. This is because limma has moderated the estimated error variance.
+
+To practice extracting information from topTable:
+How many probes have Benjamini-Hochberg ("BH") adjusted p-values < than 1e-05?
+```{r}
+topx <- topTable(wtEbFit, number=Inf, p.value=1e-05, coef = grep("devStage", colnames(coef(wtEbFit))))
+nrow(topx)
+```
+Pulling out the 63rd hit on the above list:
+```{r}
+(topx[63,c("F","adj.P.Val","devStageP6")])
+```
+Scatterplot the t-statistics for the test that the P2 effect is zero against that of P10.
+```{r}
+P2.hits <- topTable(wtEbFit, number=Inf, sort.by="none", coef = grep("devStageP2", colnames(coef(wtEbFit))))
+P10.hits <- topTable(wtEbFit, number=Inf, sort.by="none", coef = grep("devStageP10", colnames(coef(wtEbFit))))
+smoothScatter(P10.hits$t ~ P2.hits$t, xlim = c(-20, 20), ylim = c(-20, 20), xlab = "t-statistic for P2 effect", ylab = "t-statistic for P10 effect")
+abline(a = 0, b = 1, col = "orange")
+```
+
+Density plot of the associated p-values:
+```{r fig.width=7, fig.height=6}
+densityplot(~P10.hits$adj.P.Val + P2.hits$adj.P.Val, auto.key=T, plot.points=F)
+```
+The p-value distribution for P10 has a positive skew (to the right), we can say that P10 is more clearly distinguished from E16.
+
+Hits with BH adjusted p-values <1e-03 for P2 vs. P10:
+```{r}
+addmargins(table(P2.hits$adj.P.Val < 0.001, P10.hits$adj.P.Val < 0.001, dnn = c("P2", "P10")))
+```
+Observe 53 hits for P2, 747 for P10 and an overlap of 52 hits
+
+Scatterplot matrix of raw p-values, BH adjusted p-values and BY
+```{r fig.width=7, fig.height=6}
+P10.hits.BY <- topTable(wtEbFit, number=Inf, sort.by="none", adjust.method="BY", coef = grep("devStageP10", colnames(coef(wtEbFit))))
+pdat <- data.frame(raw=P10.hits$P.Value, BH=P10.hits$adj.P.Val, BY=P10.hits.BY$adj.P.Val)
+head(pdat)
+splom(pdat, cex = 0.1, col="red")
+```
+Perform inference for some contrasts
+```{r}
+colnames(wtDesMat)
+(cont.matrix <- makeContrasts(P10VsP6 = devStageP10 - devStageP6, fourweeksVsP10 = devStage4_weeks - devStageP10, levels = wtDesMat))
+wtFitCont <- contrasts.fit(wtFit, cont.matrix)
+wtEbFitCont <- eBayes(wtFitCont)
+topDev <- topTable(wtEbFitCont)
+makeStripplot(top_4_hits <- prepareData(rownames(topDev[c(1,2,3,4),])))
+```
+Let's use decideTests() to adjust the p-values for both contrasts globally, i.e. all together and then threshhold them at a cutoff of 1e-04.
+```{r}
+cutoff <- 1e-04
+wtResCont <- decideTests(wtEbFitCont, p.value = cutoff, method = "global")
+summary(wtResCont)
+```
+Here are the 4 probes that decline in expression from P6 to P10.
+```{r}
+(hits1 <- rownames(prDat)[which(wtResCont[, "P10VsP6"] < 0)])
+makeStripplot(prepareData(hits1))
+```
+Here are 4 of the 8 probes that decline in expression from P10 to 4_weeks.
+```{r}
+(hits2 <- rownames(prDat)[which(wtResCont[, "fourweeksVsP10"] < 0)])
+makeStripplot(prepareData(hits2[1:4]))
+```
+No overlap between these probe sets
+```{r}
+intersect(hits1, hits2)
+```
+Here are 4 of the 46 probes that increase in expression from P10 to 4_weeks.
+```{r}
+(hits3 <- rownames(prDat)[which(wtResCont[, "fourweeksVsP10"] > 0)])
+makeStripplot(prepareData(hits3[1:4]))
+intersect(hits1, hits3)
+intersect(hits2, hits3)
+```
+No overlap between these probe sets either!
+
+Let's try this again with a less stringent p-value cutoff of 0.01
+```{r}
+cutoff <- 0.01
+nHits <- 8
+wtResCont <- decideTests(wtEbFitCont, p.value = cutoff, method = "global")
+summary(wtResCont)
+hits1 <- rownames(prDat)[which(wtResCont[, "P10VsP6"] < 0)]
+makeStripplot(prepareData(hits1[1:nHits]))
+hits2 <- rownames(prDat)[which(wtResCont[, "fourweeksVsP10"] < 0)]
+makeStripplot(prepareData(hits2[1:nHits]))
+hits3 <- rownames(prDat)[which(wtResCont[, "P10VsP6"] > 0)]
+makeStripplot(prepareData(hits3[1:nHits]))
+hits4 <- rownames(prDat)[which(wtResCont[, "fourweeksVsP10"] > 0)]
+makeStripplot(prepareData(hits4[1:nHits]))
+vennDiagram(wtResCont)
+hits5 <- rownames(prDat)[which(wtResCont[, "P10VsP6"] != 0 & wtResCont[, "fourweeksVsP10"] != 0)]
+makeStripplot(prepareData(hits5))
+hits6 <- rownames(prDat)[which(wtResCont[, "P10VsP6"] > 0 & wtResCont[, "fourweeksVsP10"] < 0)]
+makeStripplot(prepareData(hits6))
+```
+We will now try to find one or more probes that have some expression changes up to P6 and then hold steady all the way to 4_weeks.
+```{r}
+(cont.matrix1 <- makeContrasts(P2vsE16 = devStageP2 - Intercept, P6vsP2 = devStageP6 - devStageP2, P10vsP6 = devStageP10 - devStageP6, fourweeksvsP10 = devStage4_weeks - devStageP10, levels = wtDesMat))
+wtFitCont1 <- contrasts.fit(wtFit, cont.matrix1)
+wtEbFitCont1 <- eBayes(wtFitCont1)
+topDev1 <- topTable(wtEbFitCont1)
+cutoff <- 1e-04
+wtResCont1 <- decideTests(wtEbFitCont1, p.value = cutoff, method = "global")
+summary(wtResCont1)
+hitz <- rownames(prDat)[which(wtResCont1[, "P2vsE16"] != 0 & wtResCont1[, "P6vsP2"] != 0 & wtResCont1[, "P10vsP6"] == 0 & wtResCont1[, "fourweeksvsP10"] == 0)]
+makeStripplot(prepareData(hitz))
+```
+As we can see, there are 10 probes that show some expression changes up to P6 and then hold steady all the way to 4_weeks.
+
