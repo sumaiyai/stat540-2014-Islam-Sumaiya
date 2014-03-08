@@ -1,0 +1,103 @@
+Seminar 7: RNA-Seq- Differential Expression Analysis
+========================================================
+
+### Mini-exercise with edgeR
+Perform differential expression analysis on the provided dataset but first filter the data to remove genes with 1) count equal to zero across all samples and 2) count equal to zero in at least one sample in each genotype group.
+
+```{r, Preliminaries, include=FALSE}
+# Load required libraries
+library(edgeR)
+library(limma)
+library(DESeq)
+# Load data
+dat <- read.table("bottomly_count_table.tsv", header = TRUE, row.names = 1)
+des <- read.table("bottomly_phenodata.tsv", header = TRUE, row.names = 1)
+str(dat)
+str(des)
+```
+We will start by filtering out the unwanted genes from our dataset.
+
+```{r filtergenes}
+dat1 <- dat[(rowSums(dat)!=0),] # filter genes with count zero across all samples
+keepGenes <- !(apply(dat1[, des$strain == "C57BL/6J"], 1, function(x) sum(x == 0)) > 0 & apply(dat1[, des$strain == "DBA/2J"], 1, function(x) sum(x == 0)) > 0) # filter genes with count zero for at least one sample in each genotype group
+dat.filtered <- dat1[keepGenes,]
+```
+
+```{r, diff.exp.analysis}
+group <- factor(c(rep("1", 10), rep("2", 11)))
+dge.glm <- DGEList(counts = dat.filtered, group = group)
+design.matrix <- model.matrix(~group)
+dge.glm.com.disp <- estimateGLMCommonDisp(dge.glm, design.matrix, verbose = TRUE)
+dge.glm.trend.disp <- estimateGLMTrendedDisp(dge.glm.com.disp)
+dge.glm.tag.disp <- estimateGLMTagwiseDisp(dge.glm.trend.disp, design.matrix)
+plotBCV(dge.glm.tag.disp)
+fit <- glmFit(dge.glm.tag.disp, design.matrix)
+lrt <- glmLRT(fit, coef = 2)
+tt.glm <- topTags(lrt, n = Inf)
+nrow(tt.glm$table[tt.glm$table$FDR < 0.01, ]) # number of hits with FDR < 0.01
+```
+There are 731 hits with FDR < 0.01. 
+
+Let's get the direction of differential expression
+```{r}
+diff.exp <- decideTestsDGE(lrt, p = 0.05, adjust = "BH")
+table(diff.exp)
+```
+We can see that 588 genes are under-expressed in group 2 (DBA/2J) compared with group 1 (C57BL/6J), 8773 show no differences in expression while 612 genes are over-expressed in group 2 versus group 1.
+```{r}
+tags.glm <- rownames(dge.glm.tag.disp)[as.logical(diff.exp)]
+plotSmear(lrt, de.tags = tags.glm)
+abline(h = c(-2, 2), col = "blue")
+```
+
+### Mini-exercise with DESeq
+Choose a specific threshold for the adjusted p value, find the genes identified as differentially expressed using each of edgeR, DESeq and voom+limma. Compare the number of genes in these 3 lists, and draw a venn digram demonstrating the overlap (if any!).
+We will select an adjusted p-value threshold of 1e-08.
+```{r}
+adj.threshold <- 1e-08
+```
+
+#### *edgeR*
+```{r, edgeR}
+group <- factor(c(rep("1", 10), rep("2", 11)))
+dge.glm <- DGEList(counts = dat, group = group)
+design <- model.matrix(~group)
+dge.glm.com.disp <- estimateGLMCommonDisp(dge.glm, design, verbose = TRUE)
+dge.glm.trend.disp <- estimateGLMTrendedDisp(dge.glm.com.disp)
+dge.glm.tag.disp <- estimateGLMTagwiseDisp(dge.glm.trend.disp, design)
+fitE <- glmFit(dge.glm.tag.disp, design)
+lrt <- glmLRT(fitE, coef = grep("group", colnames(fitE)))
+top.tags <- topTags(lrt, n=Inf)
+edgeR.hits <- top.tags$table[top.tags$table$FDR < adj.threshold, ]
+nrow(edgeR.hits)
+```
+There are 141 edgeR hits with FDR < 1e-08.
+
+#### *DESeq*
+```{r}
+deSeqDat <- newCountDataSet(dat, group)
+deSeqDat <- estimateSizeFactors(deSeqDat)
+sizeFactors(deSeqDat)
+deSeqDat <- estimateDispersions(deSeqDat)
+results <- nbinomTest(deSeqDat, levels(group)[1], levels(group)[2])
+DESeq.hits <- na.omit(results[results$padj < adj.threshold, ])
+nrow(DESeq.hits)
+```
+There are 99 DESeq hits with FDR < 1e-08.
+
+#### *Voom and Limma*
+```{r}
+norm.factor <- calcNormFactors(dat)
+dat.voomed <- voom(dat, design, plot = TRUE, lib.size = colSums(dat) * norm.factor)
+fitV <- lmFit(dat.voomed, design)
+fitV <- eBayes(fitV)
+Voom.hits <- topTable(fitV, coef="group2", n=Inf, p.value=adj.threshold)
+nrow(Voom.hits)
+```
+There are 99 DESeq hits with FDR < 1e-08.
+
+```{r}
+hits <- list(edgeR=rownames(edgeR.hits), DESeq=rownames(DESeq.hits), Voom.Limma=rownames(Voom.hits))
+venn(hits)
+```
+We can see that there are 50 shared hits between the edgeR and voom methods at our adjusted p-value threshold of 1e-08. However, there are no shared hits between DESeq and the other two methods. 
